@@ -1,74 +1,147 @@
-spof-7 mon-srv : 
-	Καμία επίπτωση στους χρήστες. Όλες οι υπηρεσίες δικτύου, η πρόσβαση στο Internet και η διαχείριση παραμένουν λειτουργικές. 
-	Χάνεται αποκλειστικά η συλλογή Syslog. Επιπλέον εύρημα: τα ήδη συλλεγμένα μηνύματα χάνονται με την απώλεια του collector, αφού κρατούνται στη μνήμη. 
-	Επιβεβαιώνει τον χαρακτηρισμό «non-service-affecting» και τη θέση 7 στην κατάταξη σοβαρότητας.
+ENTERPRISE NETWORK LAB — SINGLE POINT OF FAILURE TESTING
+Field notes taken during the failure-simulation campaign
+
+These are the raw observations recorded at the time each device or link was
+disabled, before they were consolidated into the formal analysis. They are kept
+because they state what was seen rather than what was concluded, and because four
+of them record findings the Phase 1 analysis did not predict.
+
+Tested in ascending order of expected severity (SPOF-7 first, SPOF-3 last) so
+that the network was still largely intact while the test method was being
+settled. Listed below in register order.
 
 
-spof-6 : 
-	Η ανάλυση ονομάτων σταματά πλήρως: τα ερωτήματα αποτυγχάνουν με «could not find host» και ο browser εμφανίζει «Host Name Unresolved». 
-	Η συνδεσιμότητα παραμένει ανέπαφη: ο web server φορτώνει κανονικά όταν προσπελαστεί με διεύθυνση IP, και η πρόσβαση στο Internet λειτουργεί. 
-	Επιβεβαιώνεται η εκτίμηση της 2.10.4 ότι η απώλεια του DNS «μοιάζει με ολική διακοπή για τον χρήστη» ενώ το δίκτυο λειτουργεί, και δικαιολογείται η θέση 4 στην κατάταξη σοβαρότητας.
+-----------------------------------------------------------------------
+SPOF-1 — EDGE-R1 (edge router)
+-----------------------------------------------------------------------
 
-SPOF-5: ACC-SW1 : 
-	Η απώλεια ενός access switch αποκόπτει μόνο τους χρήστες που είναι συνδεδεμένοι σε αυτόν. 
-	Οι χρήστες του δεύτερου switch διατηρούν πλήρη λειτουργικότητα: πρόσβαση σε servers, ανάλυση ονομάτων και Internet. 
-	Επιβεβαιώνεται η απόφαση A9 να κατανεμηθούν οι χρήστες και στους δύο switches αντί να ομαδοποιηθούν ανά τμήμα: κανένα τμήμα δεν μένει εντελώς χωρίς υπηρεσία. 
-	Επιπλέον, χάνεται το LAP-1 και η ασύρματη κάλυψη της περιοχής του, ενώ το LAP-2 συνεχίζει.
+Loss of the edge router cuts off all Internet-bound traffic and all remote VPN
+access. The internal network remains functional.
 
+Additional finding, beyond the original estimate: time synchronisation collapses
+across the entire infrastructure. The core moved to "unsynchronized, stratum 16"
+and the devices began to drift apart from one another.
 
-SPOF-4: Link ISP-R ↔ EDGE-R1 : 
-	Η απώλεια της σύνδεσης με τον πάροχο αποκόπτει κάθε κίνηση προς και από το Internet. 
-	Το εσωτερικό δίκτυο παραμένει πλήρως λειτουργικό: inter-VLAN routing, πρόσβαση σε servers και διαχείριση υποδομής συνεχίζουν κανονικά. 
-	Επιπλέον εύρημα, πέρα από την αρχική εκτίμηση: χάνεται και η απομακρυσμένη πρόσβαση VPN, αφού το tunnel τερματίζει στην ίδια διεπαφή. 
-	Οι απομακρυσμένοι χρήστες του Finance και του IT δεν μπορούν να συνδεθούν για όσο διαρκεί η διακοπή.	
+This confirms the reservation recorded in 2.6.5 — that concentrating the time
+source on a single device creates a dependency — and it has a consequence for
+incident investigation: log entries produced during the outage cannot be
+correlated reliably.
 
 
-SPOF-1: EDGE-R1 : 
-	Η απώλεια του edge router αποκόπτει κάθε κίνηση προς το Internet και την απομακρυσμένη πρόσβαση VPN.
-	Το εσωτερικό δίκτυο παραμένει λειτουργικό. 
-	Επιπλέον εύρημα: καταρρέει ο συγχρονισμός χρόνου σε ολόκληρη την υποδομή. Ο core μετέβη σε «unsynchronized, stratum 16» και οι συσκευές αρχίζουν να αποκλίνουν μεταξύ τους.
-	Αυτό επιβεβαιώνει την επιφύλαξη της 2.6.5, ότι η συγκέντρωση της πηγής χρόνου σε μία συσκευή δημιουργεί εξάρτηση, και έχει συνέπεια για τη διερεύνηση περιστατικών: οι καταγραφές που παράγονται κατά τη διάρκεια της βλάβης δεν μπορούν να συσχετιστούν αξιόπιστα.
+-----------------------------------------------------------------------
+SPOF-2 — FW-1 (firewall)
+-----------------------------------------------------------------------
 
-SPOF-2: FW-1 : 
-	Η απώλεια του firewall αποκόπτει την πρόσβαση στο Internet,
-	το δίκτυο επισκεπτών στο σύνολό του και την απομακρυσμένη πρόσβαση VPN. 
-	Το εσωτερικό δίκτυο όμως παραμένει πλήρως λειτουργικό: οι χρήστες φτάνουν στους servers, η ανάλυση ονομάτων δουλεύει, 
-	και το IT διατηρεί πρόσβαση σε όλα τα VLANs και στο management.
+Loss of the firewall cuts off Internet access, the guest network in its entirety,
+and remote VPN access.
 
-	Διόρθωση της αρχικής εκτίμησης. 
-	Το SPOF-2 περιέγραφε την επίπτωση ως «Internet plus all policy-controlled transit traffic», υπονοώντας ότι καταρρέει και η εσωτερική επικοινωνία. 
-	Η δοκιμή δείχνει ότι δεν ισχύει: η 2.5.3 τοποθετεί το inter-VLAN routing στον core, οπότε η εσωτερική κίνηση δεν διέρχεται ποτέ από το firewall. 
-	Η πραγματική επίπτωση περιορίζεται στην περίμετρο. Το Guest χάνεται ολοκληρωτικά, όχι επειδή φιλτράρεται αλλά επειδή το gateway του 10.0.60.1 ζει πάνω στο firewall, συνέπεια της DD-2.
+The internal network, however, remains fully functional: users reach the servers,
+name resolution works, and IT retains access to all VLANs and to management.
 
+Correction to the original estimate. SPOF-2 described the impact as "Internet
+plus all policy-controlled transit traffic", implying that internal
+communication collapses as well. The test shows that this does not hold: 2.5.3
+places inter-VLAN routing on the core, so internal traffic never passes through
+the firewall. The real impact is confined to the perimeter.
 
-
-SPOF-3: CORE-SW1 : 
-	Η απώλεια του core προκαλεί ολική κατάρρευση. 
-	Οι σταθμοί εργασίας δεν φτάνουν ούτε στο δικό τους gateway, αφού τα SVIs ζουν πάνω στον core. 
-	Χάνονται ταυτόχρονα: inter-VLAN routing, DHCP, πρόσβαση στους servers, ανάλυση ονομάτων, πρόσβαση στο Internet, 
-	δίκτυο επισκεπτών, διαχείριση υποδομής και ολόκληρη η ασύρματη υποδομή, αφού το WLC συνδέεται στον core και τα access points αποσυνδέονται από τον controller. 
-	Η μόνη επικοινωνία που επιβιώνει είναι μεταξύ σταθμών του ίδιου VLAN στον ίδιο access switch, όπου δεν απαιτείται δρομολόγηση. 
-	Επιβεβαιώνεται η θέση 1 στην κατάταξη σοβαρότητας και ο χαρακτηρισμός «widest blast radius».
+Guest is lost completely — not because it is being filtered, but because its
+gateway 10.0.60.1 lives on the firewall itself, which is a consequence of DD-2.
 
 
+-----------------------------------------------------------------------
+SPOF-3 — CORE-SW1 (core switch)
+-----------------------------------------------------------------------
+
+Loss of the core causes total collapse. Workstations cannot even reach their own
+gateway, since the SVIs live on the core.
+
+Lost simultaneously: inter-VLAN routing, DHCP, access to the servers, name
+resolution, Internet access, the guest network, infrastructure management, and the
+whole wireless infrastructure — the WLC attaches to the core, so the access points
+lose their controller.
+
+The only communication that survives is between workstations in the same VLAN on
+the same access switch, where no routing is required.
+
+Confirms position 1 in the severity ranking and the description "widest blast
+radius".
 
 
+-----------------------------------------------------------------------
+SPOF-4 — Link ISP-R <-> EDGE-R1
+-----------------------------------------------------------------------
+
+Loss of the link to the provider cuts off all traffic to and from the Internet.
+
+The internal network remains fully functional: inter-VLAN routing, access to the
+servers and infrastructure management all continue normally.
+
+Additional finding, beyond the original estimate: remote VPN access is lost as
+well, since the tunnel terminates on the same interface. Remote Finance and IT
+users cannot connect for the duration of the outage.
 
 
+-----------------------------------------------------------------------
+SPOF-5 — ACC-SW1 (access switch)
+-----------------------------------------------------------------------
+
+Loss of a single access switch isolates only the users connected to it. Users on
+the second switch retain full functionality: server access, name resolution and
+Internet.
+
+This confirms decision A9 — to distribute users across both switches rather than
+group them by department: no department is left entirely without service.
+
+In addition, LAP-1 is lost along with the wireless coverage of its area, while
+LAP-2 continues to serve.
 
 
+-----------------------------------------------------------------------
+SPOF-6 — DNS-SRV
+-----------------------------------------------------------------------
+
+Name resolution stops completely: queries fail with "could not find host" and the
+browser reports "Host Name Unresolved".
+
+Connectivity itself remains intact: the web server loads normally when reached by
+IP address, and Internet access works.
+
+This confirms the assessment in 2.10.4 that the loss of DNS "looks like a total
+outage to the user" while the network is in fact working, and it justifies
+position 4 in the severity ranking.
 
 
+-----------------------------------------------------------------------
+SPOF-7 — MON-SRV (monitoring / Syslog collector)
+-----------------------------------------------------------------------
+
+No impact on users. All network services, Internet access and management remain
+operational. Syslog collection alone is lost.
+
+Additional finding: the messages already collected are lost together with the
+collector, since they are held in memory.
+
+Confirms the classification "non-service-affecting" and position 7 in the
+severity ranking.
 
 
+-----------------------------------------------------------------------
+SUMMARY OF FINDINGS NOT PREDICTED BY PHASE 1
+-----------------------------------------------------------------------
 
+1. SPOF-1 — the edge router is also the time source for the infrastructure, so
+   its loss destroys log correlation during the very outage that would need
+   investigating.
 
-SPOF	Στοιχείο	Πραγματική επίπτωση	Κατάταξη
-3	Core	Ολική κατάρρευση: routing, DHCP, servers, Internet, Guest, management, ασύρματο	1
-1	Edge Router	Internet, VPN, και κατάρρευση NTP σε όλη την υποδομή	3
-2	Firewall	Internet, Guest, VPN. Το εσωτερικό δίκτυο παραμένει πλήρως λειτουργικό	2 → αναθεωρείται
-6	DNS Server	Ανάλυση ονομάτων. Συνδεσιμότητα ανέπαφη	4
-4	Σύνδεση ISP	Internet και VPN	5
-5	Access Switch	Μόνο οι χρήστες του. Κάθε τμήμα επιβιώνει μέσω του άλλου switch	6
-7	Monitoring Server	Μόνο η συλλογή Syslog. Τα ήδη συλλεγμένα μηνύματα χάνονται	7
+2. SPOF-2 — the predicted impact was too wide. Internal transit does not depend
+   on the firewall, so internal routing survives. Guest is lost for a different
+   reason than filtering: its gateway lives on the firewall.
 
+3. SPOF-4 — the ISP link also carries the VPN, so an outage that was described as
+   "Internet only" also removes remote access.
+
+4. SPOF-7 — the collector holds its messages in memory, so the failure takes the
+   historical record with it, not just future collection.
+
+The revised severity ranking, the test method and the Phase 2 priorities are in
+enterprise-network-lab-spof-analysis.md, which supersedes the Phase 1 ordering.
