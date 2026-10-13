@@ -1,0 +1,114 @@
+!==============================================================================
+! ISP-R — Provider Router (simulation)
+! Cisco ISR 4331 · IOS 15.4
+!------------------------------------------------------------------------------
+! Role      NOT part of the organisation's network. This device stands in for
+!           the service provider and gives the lab two things the design needs
+!           to be exercised against:
+!
+!             1. An Internet         198.51.100.0/24, carrying both the public
+!                                    server (.10) and the remote VPN client (.50)
+!             2. A provider handoff  203.0.113.0/30
+!
+! Scope     Configuration standards that apply to the company's own devices —
+!           SSH only, Syslog to 10.0.50.30, NTP, hardened unused ports — are
+!           deliberately NOT applied here. A provider router is outside the
+!           organisation's administrative control, and configuring it to
+!           corporate standards would misrepresent the boundary the design is
+!           built around. It is included for completeness, not as an example
+!           of the project's configuration practice.
+!
+! Captured  show running-config, after implementation and testing
+! Design    2.4.4 (boundary addressing) · 3.4.3 (connection map)
+!==============================================================================
+
+version 15.4
+no service timestamps log datetime msec
+no service timestamps debug datetime msec
+no service password-encryption
+!
+hostname ISP-R
+!
+ip cef
+no ipv6 cef
+!
+no ip domain-lookup
+!
+spanning-tree mode pvst
+!
+! ----------------------------------------------------------------- Interfaces
+! All three segments use RFC 5737 documentation address space, which exists
+! precisely so that examples and lab work never reference real public
+! addresses:
+!
+!   203.0.113.0/24   TEST-NET-3   provider handoff
+!   198.51.100.0/24  TEST-NET-2   the simulated Internet
+!   192.0.2.0/24     TEST-NET-1   the network remote users connect from
+!
+interface GigabitEthernet0/0/0
+ description Link to EDGE-R1
+ ip address 203.0.113.1 255.255.255.252
+ duplex auto
+ speed auto
+!
+interface GigabitEthernet0/0/1
+ description Internet segment
+ ip address 198.51.100.1 255.255.255.0
+ duplex auto
+ speed auto
+!
+! CONFIGURED BUT UNCONNECTED. This interface was intended to give remote users
+! a segment of their own, separate from the Internet. Nothing is cabled to it:
+! the remote client (198.51.100.50) sits on the Internet segment instead.
+!
+! The VPN test is unaffected — a client at 198.51.100.50 is still outside the
+! perimeter, so the tunnel crosses it genuinely rather than being simulated
+! from inside. What is lost is the distinction between "a user at home" and
+! "a host on the public Internet", which the two-segment arrangement would have
+! made visible.
+!
+! Note also that 192.0.2.0/24 is the same documentation range the wireless
+! controller uses for its virtual interface (2.4.6). The two never meet, but
+! the coincidence is recorded so it is not later mistaken for a design.
+!
+interface GigabitEthernet0/0/2
+ description Remote user segment
+ ip address 192.0.2.254 255.255.255.0
+ duplex auto
+ speed auto
+!
+interface Vlan1
+ no ip address
+ shutdown
+!
+router rip
+!                  ^ Empty — no networks advertised, so this process does
+!                    nothing. A leftover; `no router rip` would remove it.
+!
+! -------------------------------------------------------------------- Routing
+! This single static route was the missing piece in the D2 diagnosis. When the
+! firewall-to-edge link moved to 203.0.113.4/30, the provider had no route back
+! to it: translated traffic left the network correctly and the replies were
+! discarded here, because this device did not know where 203.0.113.4/30 lived.
+!
+! It is the one change the provider side required, and it is a realistic one —
+! a provider does have to route the block it assigns to a customer.
+!
+ip classless
+ip route 203.0.113.4 255.255.255.252 203.0.113.2
+!
+ip flow-export version 9
+!
+! ----------------------------------------------------------------- Management
+! Left at defaults. See the scope note in the header: this device is not
+! administered by the organisation, so corporate management standards
+! (SSH-only transport, Syslog, NTP, exec timeouts) are not applied.
+!
+line con 0
+!
+line aux 0
+!
+line vty 0 4
+ login
+!
+end

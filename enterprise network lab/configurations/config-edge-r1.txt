@@ -1,0 +1,233 @@
+!==============================================================================
+! EDGE-R1 — Edge Router
+! Cisco ISR 4331 · IOS 15.4
+!------------------------------------------------------------------------------
+! Role      Four roles on one device, which is more than the two interfaces
+!           suggest and is why this device ranks second in the SPOF analysis:
+!
+!             1. Internet path        Gi0/0/0 outbound, Gi0/0/1 inbound
+!             2. PAT for all internal traffic      (3.6 — D13)
+!             3. Remote-access VPN termination     (3.6 — D11)
+!             4. Network time reference            (3.6 — D19)
+!
+!           Failure testing confirmed that losing this device removes all
+!           four. See the SPOF analysis, SPOF-1.
+!
+! Captured  show running-config, after implementation and testing
+! Design    3.5.7 (port mapping) · 2.5.6 (NAT) · 2.9 (VPN) · 2.6.5 (time)
+!------------------------------------------------------------------------------
+! NOTE 1 — CREDENTIALS REMOVED
+!
+!   Password hashes AND the two VPN group keys have been replaced with
+!   <REMOVED>. The group keys appear in clear text in the running
+!   configuration, which is a property of the authentication method rather
+!   than a configuration error — see NOTE 2.
+!
+! NOTE 2 — WHY THE VPN AUTHENTICATION IS WEAKER THAN DESIGNED
+!
+!   Sub-stage 2.9.5 specifies multi-factor authentication, with per-user
+!   certificates as the fallback. Neither was available: the environment
+!   provides no PKI. What is configured instead is a shared group key per
+!   department plus per-user credentials (3.6 — D20).
+!
+!   A certificate is something *held* — issued to one person, installed on one
+!   machine. A group key is something *shared*: identical for everyone in the
+!   department, so possessing it proves group membership rather than identity,
+!   and a leak requires changing it for everyone. The same weakness as a
+!   wireless passphrase, analysed in 2.8.3.
+!
+!   It is a real improvement on credentials alone — a stolen password is not
+!   sufficient — and that is the honest limit of the claim.
+!==============================================================================
+
+version 15.4
+service timestamps log datetime msec
+no service timestamps debug datetime msec
+no service password-encryption
+!
+hostname EDGE-R1
+!
+enable secret 5 <REMOVED>
+!
+! ------------------------------------------------------------------------ AAA
+! `aaa authentication login default local` is required for the VPN to complete.
+! Without it the tunnel negotiated and then timed out, because the client
+! authentication stage had no list to consult.
+!
+aaa new-model
+!
+aaa authentication login VPN-AUTH local
+aaa authentication login default local
+!
+aaa authorization network VPN-AUTHOR local
+aaa authorization network default local
+!
+clock timezone EET 2
+!
+ip cef
+no ipv6 cef
+!
+username admin privilege 15 secret 5 <REMOVED>
+username vpnfin privilege 0 secret 5 <REMOVED>
+username vpnit privilege 0 secret 5 <REMOVED>
+!
+! ------------------------------------------------------- Remote-access VPN
+! The tunnel terminates here rather than on the firewall, because the firewall
+! provides no mechanism for assigning addresses to remote clients (3.6 — D11).
+!
+! Policy enforcement does NOT move with it. The route `10.0.0.0/8 →
+! 203.0.113.5` below is the only path this device holds toward internal
+! addresses, so every packet from a VPN client is sent to the firewall and
+! evaluated against rules 7 and 8. The restriction is structural: it holds
+! because no other route exists, not because a rule forbids it.
+!
+! Two groups, two pools. The pool a client receives IS its identity — the
+! firewall distinguishes remote Finance from remote IT by source address and
+! applies a different rule to each (2.9.3). Verified by test: the same
+! workstation reached VLAN 99 with IT credentials and was denied it with
+! Finance credentials.
+!
+crypto isakmp policy 10
+ encr aes 256
+ authentication pre-share
+ group 2
+!
+crypto isakmp client configuration group VPN-FINANCE
+ key <REMOVED>
+ pool VPN-FINANCE-POOL
+!
+crypto isakmp client configuration group VPN-IT
+ key <REMOVED>
+ pool VPN-IT-POOL
+!
+crypto ipsec transform-set VPN-SET esp-aes 256 esp-sha-hmac
+!
+crypto dynamic-map DYN-MAP 10
+ set transform-set VPN-SET
+ reverse-route
+!
+crypto map VPN-MAP client authentication list VPN-AUTH
+crypto map VPN-MAP isakmp authorization list VPN-AUTHOR
+crypto map VPN-MAP client configuration address respond
+crypto map VPN-MAP 65535 ipsec-isakmp dynamic DYN-MAP
+!
+ip ssh version 2
+no ip domain-lookup
+ip domain-name company.local
+!
+spanning-tree mode pvst
+!
+! ----------------------------------------------------------------- Interfaces
+! Both links carry public address space, because both are boundary links: the
+! address at the outer end of each is what the Internet sees (2.4.4).
+!
+! The original design placed the firewall-to-edge link in 10.0.254.4/30,
+! treating it as internal. Translated traffic then left the network with an
+! RFC 1918 source the provider could not route, and every reply was discarded
+! upstream (3.6 — D2).
+!
+interface GigabitEthernet0/0/0
+ description Link to ISP
+ ip address 203.0.113.2 255.255.255.252
+ ip nat outside
+ duplex auto
+ speed auto
+ crypto map VPN-MAP
+!
+interface GigabitEthernet0/0/1
+ description Link to FW-1 outside
+ ip address 203.0.113.6 255.255.255.252
+ ip nat inside
+ duplex auto
+ speed auto
+!
+interface GigabitEthernet0/0/2
+ description UNUSED
+ no ip address
+ duplex auto
+ speed auto
+ shutdown
+!
+interface Vlan1
+ no ip address
+ shutdown
+!
+! ----------------------------------------------------------- Address pools
+ip local pool VPN-FINANCE-POOL 10.0.201.100 10.0.201.199
+ip local pool VPN-IT-POOL 10.0.202.100 10.0.202.199
+!
+! ------------------------------------------------------------------------ NAT
+! Translation sits here rather than on the firewall, where 2.5.6 placed it.
+! The firewall translated replies destined for the VPN pools and provided no
+! way to exempt them, so a remote client received answers from an address it
+! had never queried (3.6 — D12, D13).
+!
+! Two lists rather than one preserve the requirement that corporate and Guest
+! translation remain distinguishable (2.5.6).
+!
+ip nat inside source list 150 interface GigabitEthernet0/0/0 overload
+ip nat inside source list 151 interface GigabitEthernet0/0/0 overload
+!
+! -------------------------------------------------------------------- Routing
+! The second route is the structural control described above. It is the only
+! path from this device toward internal addresses, and it points at the
+! firewall rather than past it.
+!
+ip classless
+ip route 0.0.0.0 0.0.0.0 203.0.113.1
+ip route 10.0.0.0 255.0.0.0 203.0.113.5
+!
+ip flow-export version 9
+!
+! ------------------------------------------------------- NAT exemption lists
+! A `deny` in an access list used for NAT does not drop the packet — it means
+! "do not translate this". The deny entries are therefore the exemption the
+! firewall could not express, and they sit above the permits because the first
+! match wins.
+!
+! List 150 — the four corporate VLANs
+access-list 150 deny ip 10.0.10.0 0.0.0.255 10.0.201.0 0.0.0.255
+access-list 150 deny ip 10.0.10.0 0.0.0.255 10.0.202.0 0.0.0.255
+access-list 150 deny ip 10.0.20.0 0.0.0.255 10.0.201.0 0.0.0.255
+access-list 150 deny ip 10.0.20.0 0.0.0.255 10.0.202.0 0.0.0.255
+access-list 150 deny ip 10.0.30.0 0.0.0.255 10.0.201.0 0.0.0.255
+access-list 150 deny ip 10.0.30.0 0.0.0.255 10.0.202.0 0.0.0.255
+access-list 150 deny ip 10.0.40.0 0.0.0.255 10.0.201.0 0.0.0.255
+access-list 150 deny ip 10.0.40.0 0.0.0.255 10.0.202.0 0.0.0.255
+access-list 150 permit ip 10.0.10.0 0.0.0.255 any
+access-list 150 permit ip 10.0.20.0 0.0.0.255 any
+access-list 150 permit ip 10.0.30.0 0.0.0.255 any
+access-list 150 permit ip 10.0.40.0 0.0.0.255 any
+!
+! List 151 — Guest, kept separate so its translations stay identifiable
+access-list 151 deny ip 10.0.60.0 0.0.0.255 10.0.201.0 0.0.0.255
+access-list 151 deny ip 10.0.60.0 0.0.0.255 10.0.202.0 0.0.0.255
+access-list 151 permit ip 10.0.60.0 0.0.0.255 any
+!
+! ----------------------------------------------------------------- Management
+! SSH only. Authentication comes from the AAA default list above, which is why
+! these lines carry no `login local` of their own.
+!
+logging 10.0.50.30
+!
+line con 0
+!
+line aux 0
+!
+line vty 0 4
+ exec-timeout 5 0
+ transport input ssh
+!
+! --------------------------------------------------------------------- Time
+! `ntp master 3` rather than `ntp server`: the environment provides no
+! external time source, so this device is a stratum 3 local reference and
+! every other device synchronises from it, reporting stratum 4 (3.6 — D19).
+!
+! Consistency rather than absolute accuracy is what log correlation requires
+! (2.10.7), and consistency holds. What failure testing exposed is that this
+! device carries both the Internet path and the time reference, so losing it
+! leaves every device free-running — precisely when ordering logs matters most.
+!
+ntp master 3
+!
+end

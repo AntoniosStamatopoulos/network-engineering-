@@ -1,0 +1,255 @@
+!==============================================================================
+! ACC-SW1 — Access Switch 1
+! Cisco Catalyst 2960 · IOS 15.0
+!------------------------------------------------------------------------------
+! Role      Layer 2 access. Serves 20 user ports across all four departments,
+!           one access point, and a single trunk uplink to the core.
+!           No routing, no DHCP, no access lists — all policy is on the core.
+!
+! Captured  show running-config, after implementation and testing
+! Design    3.5.4 (port mapping) · A9 (user distribution)
+!------------------------------------------------------------------------------
+! NOTE — Credentials removed
+!
+!   Password hashes have been replaced with <REMOVED> before publication.
+!   Everything else is verbatim.
+!==============================================================================
+
+version 15.0
+service timestamps log datetime msec
+no service timestamps debug datetime msec
+no service password-encryption
+!
+hostname ACC-SW1
+!
+enable secret 5 <REMOVED>
+!
+clock timezone EET 2
+!
+ip ssh version 2
+no ip domain-lookup
+ip domain-name company.local
+!
+username admin secret 5 <REMOVED>
+!
+vtp mode transparent
+!
+spanning-tree mode pvst
+spanning-tree extend system-id
+!
+! ---------------------------------------------------------------------- VLANs
+! VLAN 50 is absent by design: the servers attach directly to the core, so the
+! VLAN never reaches this switch (3.4.3).
+!
+vlan 10
+ name HR
+!
+vlan 20
+ name FINANCE
+!
+vlan 30
+ name SALES
+!
+vlan 40
+ name IT
+!
+vlan 60
+ name GUEST
+!
+vlan 99
+ name MGMT
+!
+vlan 999
+ name PARKING
+!
+! ---------------------------------------------------------- User access ports
+! Departments occupy contiguous ranges. Every department appears on both
+! access switches (decision A9), so a switch failure degrades each department
+! rather than removing one entirely — confirmed by SPOF-5 testing.
+!
+! HR        Fa0/1-5     4 in service, 1 spare
+! FINANCE   Fa0/6-10    4 in service, 1 spare
+! SALES     Fa0/11-21  10 in service, 1 spare
+! IT        Fa0/22-23   2 in service
+!
+interface FastEthernet0/1
+ description HR
+ switchport access vlan 10
+ switchport mode access
+!
+interface FastEthernet0/2
+ description HR
+ switchport access vlan 10
+ switchport mode access
+!
+interface FastEthernet0/3
+ description HR
+ switchport access vlan 10
+ switchport mode access
+!
+interface FastEthernet0/4
+ description HR
+ switchport access vlan 10
+ switchport mode access
+!
+interface FastEthernet0/5
+ description HR
+ switchport access vlan 10
+ switchport mode access
+!
+interface FastEthernet0/6
+ description FINANCE
+ switchport access vlan 20
+ switchport mode access
+!
+interface FastEthernet0/7
+ description FINANCE
+ switchport access vlan 20
+ switchport mode access
+!
+interface FastEthernet0/8
+ description FINANCE
+ switchport access vlan 20
+ switchport mode access
+!
+interface FastEthernet0/9
+ description FINANCE
+ switchport access vlan 20
+ switchport mode access
+!
+interface FastEthernet0/10
+ description FINANCE
+ switchport access vlan 20
+ switchport mode access
+!
+interface FastEthernet0/11
+ description SALES
+ switchport access vlan 30
+ switchport mode access
+!
+interface FastEthernet0/12
+ description SALES
+ switchport access vlan 30
+ switchport mode access
+!
+interface FastEthernet0/13
+ description SALES
+ switchport access vlan 30
+ switchport mode access
+!
+interface FastEthernet0/14
+ description SALES
+ switchport access vlan 30
+ switchport mode access
+!
+interface FastEthernet0/15
+ description SALES
+ switchport access vlan 30
+ switchport mode access
+!
+interface FastEthernet0/16
+ description SALES
+ switchport access vlan 30
+ switchport mode access
+!
+interface FastEthernet0/17
+ description SALES
+ switchport access vlan 30
+ switchport mode access
+!
+interface FastEthernet0/18
+ description SALES
+ switchport access vlan 30
+ switchport mode access
+!
+interface FastEthernet0/19
+ description SALES
+ switchport access vlan 30
+ switchport mode access
+!
+interface FastEthernet0/20
+ description SALES
+ switchport access vlan 30
+ switchport mode access
+!
+interface FastEthernet0/21
+ description SALES
+ switchport access vlan 30
+ switchport mode access
+!
+interface FastEthernet0/22
+ description IT
+ switchport access vlan 40
+ switchport mode access
+!
+interface FastEthernet0/23
+ description IT
+ switchport access vlan 40
+ switchport mode access
+!
+! Access point uplink. Native VLAN 99 rather than 999: the access point sends
+! management traffic untagged and dropped to DOWN when VLAN 99 was tagged
+! (3.6 — D8). FlexConnect Local Switching means client traffic is switched
+! here rather than tunnelled to the controller (3.6 — D10).
+!
+interface FastEthernet0/24
+ description LAP trunk
+ switchport access vlan 99
+!                    ^^ Inert while the port is in trunk mode — a leftover
+!                    from before the port was converted from access to trunk.
+!                    Harmless, and left in place so the capture matches the
+!                    device.
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,20,30,40,60,99
+ switchport mode trunk
+ switchport nonegotiate
+!
+! ------------------------------------------------------------- Uplink to core
+! Single trunk. The second Gigabit port was the dedicated Guest uplink in the
+! original physical design and is no longer needed (3.4.4).
+!
+interface GigabitEthernet0/1
+ switchport trunk native vlan 999
+ switchport trunk allowed vlan 10,20,30,40,60,99
+ switchport mode trunk
+ switchport nonegotiate
+!
+interface GigabitEthernet0/2
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+! ------------------------------------------------------------------ Management
+! VLAN 1 is deliberately unused and shut down (2.3.2).
+! This is a Layer 2 switch: one SVI for its own management address, and a
+! default gateway rather than a routing table.
+!
+interface Vlan1
+ no ip address
+ shutdown
+!
+interface Vlan99
+ description Management
+ ip address 10.0.99.11 255.255.255.0
+!
+ip default-gateway 10.0.99.1
+!
+logging 10.0.50.30
+!
+line con 0
+ login local
+ exec-timeout 5 0
+!
+line vty 0 4
+ exec-timeout 5 0
+ login local
+ transport input ssh
+line vty 5 15
+ exec-timeout 5 0
+ login local
+ transport input ssh
+!
+ntp server 203.0.113.6
+!
+end

@@ -1,0 +1,273 @@
+!==============================================================================
+! FW-1 — Perimeter Firewall
+! Cisco ASA 5506-X · ASA 9.6(1)
+!------------------------------------------------------------------------------
+! Role      The single policy enforcement point for everything crossing the
+!           perimeter: Internet, Guest and remote VPN traffic. Inter-VLAN
+!           traffic does NOT pass through this device — it is routed and
+!           filtered on the core (2.5.3), which is why failure testing found a
+!           firewall outage less severe than the Phase 1 analysis predicted.
+!
+! Captured  show running-config, after implementation and testing
+! Design    3.5.6 (interfaces) · 2.6 (zones) · 2.7.3 (policy)
+!------------------------------------------------------------------------------
+! NOTE 1 — Credentials removed
+!
+!   Password hashes have been replaced with <REMOVED>. Everything else is
+!   verbatim, including the unused objects marked below.
+!
+! NOTE 2 — This device produces no logs
+!
+!   The platform does not recognise `logging` in any form, and rejects the
+!   `log` keyword on access list entries (3.6 — D16). Every security event
+!   that occurs here — a denied Guest attempt, a remote user connecting, a
+!   policy match — happens correctly and is recorded nowhere. This is the
+!   single largest shortfall in the implementation, and it is on the device
+!   that generates most of what the monitoring design exists to capture.
+!==============================================================================
+
+ASA Version 9.6(1)
+!
+hostname FW-1
+domain-name company.local
+enable password <REMOVED> encrypted
+names
+!
+! ----------------------------------------------------------------- Interfaces
+! Security levels express the trust model numerically. Traffic from a higher
+! level to a lower one is permitted by default; the reverse requires a rule.
+!
+!   outside      0   the Internet — untrusted (Z10)
+!   guest       50   visitors — untrusted, but inside the building (Z6)
+!   inside     100   the corporate network (Z1-Z5, Z7)
+!   management 100   the management plane, isolated by `management-only`
+!
+! Guest at 50 rather than 0 is deliberate. It is not the Internet — it is a
+! population the organisation hosts and provides a service to — but it is not
+! trusted either. The number places it between the two, and the GUEST-IN list
+! below does the actual work of keeping it out of the internal network.
+!
+interface GigabitEthernet1/1
+ nameif outside
+ security-level 0
+ ip address 203.0.113.5 255.255.255.252
+!
+interface GigabitEthernet1/2
+ nameif inside
+ security-level 100
+ ip address 10.0.254.2 255.255.255.252
+!
+! Guest arrives untagged from core Gi1/0/4. A tagged subinterface was tried
+! first and rejected: this platform does not implement them (3.6 — D3).
+!
+interface GigabitEthernet1/3
+ nameif guest
+ security-level 50
+ ip address 10.0.60.1 255.255.255.0
+!
+interface GigabitEthernet1/4
+ no nameif
+ no security-level
+ no ip address
+ shutdown
+!
+interface GigabitEthernet1/5
+ no nameif
+ no security-level
+ no ip address
+ shutdown
+!
+interface GigabitEthernet1/6
+ no nameif
+ no security-level
+ no ip address
+ shutdown
+!
+interface GigabitEthernet1/7
+ no nameif
+ no security-level
+ no ip address
+ shutdown
+!
+interface GigabitEthernet1/8
+ no nameif
+ no security-level
+ no ip address
+ shutdown
+!
+! `management-only` prevents this interface carrying transit traffic. It
+! terminates on core Gi1/0/10 in VLAN 99, so the firewall sits in the same
+! management plane as every other infrastructure device (2.10.2).
+!
+interface Management1/1
+ management-only
+ nameif management
+ security-level 100
+ ip address 10.0.99.30 255.255.255.0
+!
+! ------------------------------------------------------------- Network objects
+! UNUSED. These were defined when translation was performed here, and no `nat`
+! statement references them any longer: PAT moved to the edge router because
+! this platform offers no way to exempt VPN traffic from translation
+! (3.6 — D12, D13).
+!
+! They are left in place so that this capture matches the device. `clear
+! configure object network` would remove them.
+!
+! The four per-VLAN objects are themselves a correction: a single INTERNAL-NET
+! covering 10.0.0.0/16 also matched Guest traffic, because this platform does
+! not evaluate the source interface. Separation was confirmed by hit counters
+! (3.6 — D4).
+!
+object network GUEST-NET
+ subnet 10.0.60.0 255.255.255.0
+object network INTERNAL-NET
+ subnet 10.0.0.0 255.255.0.0
+object network VLAN10-HR
+ subnet 10.0.10.0 255.255.255.0
+object network VLAN20-FIN
+ subnet 10.0.20.0 255.255.255.0
+object network VLAN30-SAL
+ subnet 10.0.30.0 255.255.255.0
+object network VLAN40-IT
+ subnet 10.0.40.0 255.255.255.0
+object network VPN-FIN-NET
+ subnet 10.0.201.0 255.255.255.0
+object network VPN-IT-NET
+ subnet 10.0.202.0 255.255.255.0
+!
+! -------------------------------------------------------------------- Routing
+! The two VPN pool routes are more specific than the 10.0.0.0/16 inside route
+! and therefore win for VPN traffic. Without them, replies to remote clients
+! would be sent inward to the core instead of outward to the edge router,
+! where the tunnel terminates (2.5.4).
+!
+route inside 10.0.0.0 255.255.0.0 10.0.254.1 1
+route outside 0.0.0.0 0.0.0.0 203.0.113.6 1
+route outside 10.0.201.0 255.255.255.0 203.0.113.6 1
+route outside 10.0.202.0 255.255.255.0 203.0.113.6 1
+!
+! ------------------------------------------------------------- Access control
+! OUTSIDE-IN — rules 7 and 8 of 2.7.3, plus three entries implementation
+! required.
+!
+! Lines 1-3 are the Finance pool: its own VLAN and two named servers, nothing
+! else. Lines 4-9 are the IT pool: every internal VLAN including management.
+! This asymmetry is requirement F9, identified in 3.1.3 as the requirement
+! whose failure carries the greatest security consequence. The address IS the
+! identity — the pool a client receives determines which rules apply (2.9.3).
+!
+! Verified by test: the same workstation reached VLAN 99 with IT credentials
+! and was denied it with Finance credentials.
+!
+access-list OUTSIDE-IN extended permit ip 10.0.201.0 255.255.255.0 10.0.20.0 255.255.255.0
+access-list OUTSIDE-IN extended permit ip 10.0.201.0 255.255.255.0 host 10.0.50.10
+access-list OUTSIDE-IN extended permit ip 10.0.201.0 255.255.255.0 host 10.0.50.20
+access-list OUTSIDE-IN extended permit ip 10.0.202.0 255.255.255.0 10.0.10.0 255.255.255.0
+access-list OUTSIDE-IN extended permit ip 10.0.202.0 255.255.255.0 10.0.20.0 255.255.255.0
+access-list OUTSIDE-IN extended permit ip 10.0.202.0 255.255.255.0 10.0.30.0 255.255.255.0
+access-list OUTSIDE-IN extended permit ip 10.0.202.0 255.255.255.0 10.0.40.0 255.255.255.0
+access-list OUTSIDE-IN extended permit ip 10.0.202.0 255.255.255.0 10.0.50.0 255.255.255.0
+access-list OUTSIDE-IN extended permit ip 10.0.202.0 255.255.255.0 10.0.99.0 255.255.255.0
+!
+! The next two admit diagnostic ICMP and NTP replies from the edge router.
+! The time source sits OUTSIDE the firewall, so this device must cross its own
+! perimeter to synchronise — a dependency the design did not anticipate
+! (2.7.3a).
+!
+access-list OUTSIDE-IN extended permit icmp host 203.0.113.6 host 203.0.113.5
+access-list OUTSIDE-IN extended permit udp host 203.0.113.6 eq 123 host 203.0.113.5
+!
+! The last entry is the only one in the whole project that would be
+! inadvisable on physical equipment. Sub-stage 2.7.4 states that a stateful
+! firewall recognises replies to permitted outbound connections without a
+! rule — requirement F1. On this platform the connection table was not
+! consulted before the inbound list, so replies were dropped (3.6 — D14).
+!
+! It is narrow: echo-reply only, no inbound initiation rights. On equipment
+! that inspects statefully it should be REMOVED, not carried forward.
+!
+access-list OUTSIDE-IN extended permit icmp any any echo-reply
+!
+! GUEST-IN — rule 6 of 2.7.3. Originally described as redundant, because the
+! core held no SVI for VLAN 60 and Guest had no route inward at all. Its
+! status changed when the physical design moved VLAN 60 to Layer 2 transit
+! through the core (3.4.4): the failure mode it guards — an SVI created by
+! mistake — is now possible rather than impossible. It recorded 12 hits during
+! isolation testing.
+!
+access-list GUEST-IN extended deny ip 10.0.60.0 255.255.255.0 10.0.0.0 255.255.0.0
+access-list GUEST-IN extended permit ip 10.0.60.0 255.255.255.0 any
+!
+access-group OUTSIDE-IN in interface outside
+access-group GUEST-IN in interface guest
+!
+aaa authentication ssh console LOCAL
+!
+ntp server 203.0.113.6
+!
+! ------------------------------------------------------------- Unused remnants
+! Both lines below are remnants of the attempt to terminate the VPN here, which
+! this platform cannot do: it provides no mechanism for assigning addresses to
+! remote clients — no `ip local pool`, no `address-pool` in tunnel-group
+! attributes, and a group-policy offering only `vpn-tunnel-protocol` and
+! `webvpn` (3.6 — D11). The tunnel terminates on the edge router instead.
+!
+! They configure nothing and are left in place so this capture matches the
+! device.
+!
+group-policy VPN-FIN-POLICY internal
+username admin password <REMOVED> encrypted
+!
+! ------------------------------------------------------- Stateful inspection
+! The inspection engines below are what requirement F1 describes, and they
+! work for the protocols listed. The gap found at implementation was narrower
+! than it appears: replies were matched against the inbound access list before
+! the connection table, which is why the echo-reply entry above exists.
+!
+class-map inspection_default
+ match default-inspection-traffic
+!
+policy-map type inspect dns preset_dns_map
+ parameters
+  message-length maximum 512
+policy-map global_policy
+ class inspection_default
+  inspect dns preset_dns_map
+  inspect ftp
+  inspect icmp
+  inspect tftp
+!
+service-policy global_policy global
+!
+! ----------------------------------------------------------------- Management
+! SSH from the IT VLAN over inside, and from the management VLAN over the
+! management interface. No `telnet` permit statement exists, so Telnet is
+! refused from every source (2.10.3) — the `telnet timeout` line is a timer,
+! not a permission.
+!
+telnet timeout 5
+ssh 10.0.40.0 255.255.255.0 inside
+ssh 10.0.99.0 255.255.255.0 management
+ssh timeout 5
+!
+! ------------------------------------------------------------------ Guest DHCP
+! CONFIGURED BUT NOT RUNNING (3.6 — D5).
+!
+! The pool is stored and `show dhcpd state` reports the interface as
+! configured for DHCP service, but `dhcpd enable guest` is rejected with
+! "need to define address pool range first" — the device contradicting its own
+! configuration. Attempted with alternative syntax, a narrower pool, and with
+! the lease removed.
+!
+! Guest clients in the lab are therefore addressed statically from the same
+! range. The two-hour lease below IS accepted and stored; it simply never
+! takes effect, because the service never starts.
+!
+dhcpd lease 7200
+!
+dhcpd address 10.0.60.100-10.0.60.199 guest
+dhcpd dns 198.51.100.10 interface guest
+!
+tunnel-group VPN-FINANCE type remote-access
+!

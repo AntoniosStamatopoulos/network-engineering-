@@ -1,0 +1,460 @@
+!==============================================================================
+! CORE-SW1 — Core Switch
+! Cisco Catalyst 3650-24PS · IOS 16.3.2
+!------------------------------------------------------------------------------
+! Role      Layer 3 core. Holds every SVI except VLAN 60, performs all
+!           inter-VLAN routing and filtering, serves DHCP for five VLANs,
+!           and hands Guest traffic to the firewall at Layer 2.
+!
+! Captured  show running-config, after implementation and testing
+! Design    3.5.3 (port mapping) · 2.5.3 (inter-VLAN routing) · 2.7.2 (ACLs)
+!------------------------------------------------------------------------------
+! NOTE 1 — ACCESS LISTS APPEAR UNAPPLIED, AND ARE NOT
+!
+!   The five access lists below are applied to their SVIs, but Packet Tracer
+!   does not render `ip access-group` statements in running-config. They are
+!   therefore absent from this capture on every Vlan interface.
+!
+!   Applied as:
+!     Vlan10 → HR-IN in     Vlan20 → FIN-IN in    Vlan30 → SAL-IN in
+!     Vlan50 → SERVERS-IN in, SERVERS-PROTECT out
+!     Vlan99 → MGMT-PROTECT out
+!
+!   Enforcement was verified functionally rather than by inspection — see the
+!   test results document, where eighteen access-control tests confirm every
+!   permit and deny the policy specifies. `show access-lists` output for this
+!   device is in the companion file.
+!
+! NOTE 2 — CREDENTIALS REMOVED
+!
+!   Password hashes have been replaced with <REMOVED> before publication.
+!   Everything else is verbatim.
+!==============================================================================
+
+version 16.3.2
+service timestamps log datetime msec
+no service timestamps debug datetime msec
+no service password-encryption
+!
+hostname CORE-SW1
+!
+no profinet
+enable secret 5 <REMOVED>
+!
+! ---------------------------------------------------------------- DHCP scopes
+! Excluded ranges reserve .1-.99 (gateway, infrastructure, static) and
+! .200-.254 (future use), leaving .100-.199 for endpoints — see 2.4.5.
+!
+ip dhcp excluded-address 10.0.10.1 10.0.10.99
+ip dhcp excluded-address 10.0.10.200 10.0.10.254
+ip dhcp excluded-address 10.0.20.200 10.0.20.254
+ip dhcp excluded-address 10.0.20.1 10.0.20.99
+ip dhcp excluded-address 10.0.30.1 10.0.30.99
+ip dhcp excluded-address 10.0.30.200 10.0.30.254
+ip dhcp excluded-address 10.0.40.1 10.0.40.99
+ip dhcp excluded-address 10.0.40.200 10.0.40.254
+ip dhcp excluded-address 10.0.99.1 10.0.99.99
+ip dhcp excluded-address 10.0.99.200 10.0.99.254
+!
+ip dhcp pool VLAN10-HR
+ network 10.0.10.0 255.255.255.0
+ default-router 10.0.10.1
+ dns-server 10.0.50.10
+ domain-name company.local
+ip dhcp pool VLAN20-FINANCE
+ network 10.0.20.0 255.255.255.0
+ default-router 10.0.20.1
+ dns-server 10.0.50.10
+ domain-name company.local
+ip dhcp pool VLAN30-SALES
+ network 10.0.30.0 255.255.255.0
+ default-router 10.0.30.1
+ dns-server 10.0.50.10
+ domain-name company.local
+ip dhcp pool VLAN40-IT
+ network 10.0.40.0 255.255.255.0
+ default-router 10.0.40.1
+ dns-server 10.0.50.10
+ domain-name company.local
+ip dhcp pool VLAN99-MGMT
+ network 10.0.99.0 255.255.255.0
+ default-router 10.0.99.1
+ dns-server 10.0.50.10
+ domain-name company.local
+!
+clock timezone EET 2
+!
+no ip cef
+ip routing
+!
+no ipv6 cef
+!
+username admin privilege 15 secret 5 <REMOVED>
+!
+ip ssh version 2
+no ip domain-lookup
+ip domain-name company.local
+!
+vtp mode transparent
+!
+spanning-tree mode pvst
+!
+! ---------------------------------------------------------------------- VLANs
+vlan 10
+ name HR
+!
+vlan 20
+ name FINANCE
+!
+vlan 30
+ name SALES
+!
+vlan 40
+ name IT
+!
+vlan 50
+ name SERVERS
+!
+vlan 60
+ name GUEST
+!
+vlan 99
+ name MGMT
+!
+vlan 999
+ name PARKING
+!
+! ----------------------------------------------------------------- Interfaces
+! Uplinks to the access switches. Native VLAN 999 is an unused VLAN with no
+! SVI anywhere, which removes the destination a double-tagging attack needs.
+!
+interface GigabitEthernet1/0/1
+ switchport trunk native vlan 999
+ switchport trunk allowed vlan 10,20,30,40,60,99
+ switchport mode trunk
+!
+interface GigabitEthernet1/0/2
+ switchport trunk native vlan 999
+ switchport trunk allowed vlan 10,20,30,40,60,99
+ switchport mode trunk
+!
+interface GigabitEthernet1/0/3
+ description Link to FW-1 inside
+ no switchport
+ ip address 10.0.254.1 255.255.255.252
+ duplex auto
+ speed auto
+!
+! Guest handoff. An untagged access port, not a trunk: the firewall does not
+! implement subinterfaces (3.6 — D3). Only VLAN 60 crosses this link.
+!
+interface GigabitEthernet1/0/4
+ description Guest L2 handoff to FW-1 Gi1/3
+ switchport access vlan 60
+ switchport mode access
+!
+interface GigabitEthernet1/0/5
+ description SERVERS
+ switchport access vlan 50
+ switchport mode access
+!
+interface GigabitEthernet1/0/6
+ description SERVERS
+ switchport access vlan 50
+ switchport mode access
+!
+interface GigabitEthernet1/0/7
+ description SERVERS
+ switchport access vlan 50
+ switchport mode access
+!
+interface GigabitEthernet1/0/8
+ description RESERVED - future File Server
+ switchport access vlan 50
+ switchport mode access
+ shutdown
+!
+! Wireless controller. Native VLAN 99 rather than 999: the controller sends
+! management traffic untagged and offers no VLAN identifier field, and was
+! unreachable with native 999 (3.6 — D8).
+!
+interface GigabitEthernet1/0/9
+ description WLC-1trunk
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,20,30,40,60,99
+ switchport mode trunk
+ switchport nonegotiate
+!
+interface GigabitEthernet1/0/10
+ description FW-1 management interface
+ switchport access vlan 99
+ switchport mode access
+!
+! Unused ports are parked in VLAN 999 and shut down. VLAN 999 has no SVI
+! anywhere, so a device connected to a free socket reaches nothing (2.3.4).
+!
+interface GigabitEthernet1/0/11
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/12
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/13
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/14
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/15
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/16
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/17
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/18
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/19
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/20
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/21
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/22
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/23
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/24
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/1/1
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/1/2
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/1/3
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/1/4
+ description UNUSED
+ switchport access vlan 999
+ switchport mode access
+ shutdown
+!
+! ----------------------------------------------------------- SVIs (gateways)
+! VLAN 1 is deliberately unused and shut down (2.3.2).
+! There is NO SVI for VLAN 60: the core carries the VLAN at Layer 2 but holds
+! no address in it, so it cannot route Guest traffic into any other VLAN.
+! This is the structural basis of Guest isolation (2.3.4).
+!
+interface Vlan1
+ no ip address
+ shutdown
+!
+interface Vlan10
+ description HR gateway
+ mac-address 00d0.d36d.5c01
+ ip address 10.0.10.1 255.255.255.0
+!
+interface Vlan20
+ description Finance gateway
+ mac-address 00d0.d36d.5c02
+ ip address 10.0.20.1 255.255.255.0
+!
+interface Vlan30
+ description SALES gateway
+ mac-address 00d0.d36d.5c03
+ ip address 10.0.30.1 255.255.255.0
+!
+interface Vlan40
+ description IT gateway
+ mac-address 00d0.d36d.5c04
+ ip address 10.0.40.1 255.255.255.0
+!
+interface Vlan50
+ description SERVERS gateway
+ mac-address 00d0.d36d.5c05
+ ip address 10.0.50.1 255.255.255.0
+!
+interface Vlan99
+ description MGMT gateway and core management address
+ mac-address 00d0.d36d.5c06
+ ip address 10.0.99.1 255.255.255.0
+!
+! -------------------------------------------------------------------- Routing
+! One default route to the firewall. Anything the core does not recognise as
+! internal is sent to the enforcement point (2.5.4).
+!
+ip classless
+ip route 0.0.0.0 0.0.0.0 10.0.254.2
+!
+ip flow-export version 9
+!
+! ------------------------------------------------------------- Access control
+! Applied as listed in NOTE 1 above. Rule numbers in the remarks refer to the
+! policy table in 2.7.2; entries without a rule number are the additions that
+! implementation required, documented in 2.7.2a.
+!
+ip access-list extended MGMT-PROTECT
+remark Rule 1 - IT to management devices
+permit tcp 10.0.40.0 0.0.0.255 10.0.99.0 0.0.0.255 eq 22
+remark Allow IT ping for availability checks
+permit icmp 10.0.40.0 0.0.0.255 10.0.99.0 0.0.0.255
+remark Allow established return traffic to IT
+permit tcp 10.0.99.0 0.0.0.255 10.0.40.0 0.0.0.255 established
+remark Rule 2 - deny everything else, logged
+deny ip any 10.0.99.0 0.0.0.255
+permit tcp 10.0.40.0 0.0.0.255 host 10.0.99.40 eq 443
+ip access-list extended HR-IN
+remark Rule 7 -deny other departments
+permit udp any any eq bootps
+deny ip 10.0.10.0 0.0.0.255 10.0.99.0 0.0.0.255
+deny ip 10.0.10.0 0.0.0.255 10.0.20.0 0.0.0.255
+deny ip 10.0.10.0 0.0.0.255 10.0.30.0 0.0.0.255
+remark Everything else permitted - servers, internet, VPN returns
+permit ip 10.0.10.0 0.0.0.255 any
+ip access-list extended FIN-IN
+permit udp any any eq bootps
+deny ip 10.0.20.0 0.0.0.255 10.0.99.0 0.0.0.255
+deny ip 10.0.20.0 0.0.0.255 10.0.10.0 0.0.0.255
+deny ip 10.0.20.0 0.0.0.255 10.0.30.0 0.0.0.255
+permit ip 10.0.20.0 0.0.0.255 any
+ip access-list extended SAL-IN
+permit udp any any eq bootps
+deny ip 10.0.30.0 0.0.0.255 10.0.99.0 0.0.0.255
+deny ip 10.0.30.0 0.0.0.255 10.0.10.0 0.0.0.255
+deny ip 10.0.30.0 0.0.0.255 10.0.20.0 0.0.0.255
+permit ip 10.0.30.0 0.0.0.255 any
+ip access-list extended SERVERS-PROTECT
+remark Rule 3 - DNS queries from user VLANs
+permit udp 10.0.10.0 0.0.0.255 host 10.0.50.10 eq domain
+permit udp 10.0.20.0 0.0.0.255 host 10.0.50.10 eq domain
+permit udp 10.0.30.0 0.0.0.255 host 10.0.50.10 eq domain
+permit udp 10.0.40.0 0.0.0.255 host 10.0.50.10 eq domain
+permit tcp 10.0.10.0 0.0.0.255 host 10.0.50.10 eq domain
+permit tcp 10.0.20.0 0.0.0.255 host 10.0.50.10 eq domain
+permit tcp 10.0.30.0 0.0.0.255 host 10.0.50.10 eq domain
+permit tcp 10.0.40.0 0.0.0.255 host 10.0.50.10 eq domain
+remark Rule 4 - web access from user VLANs
+permit tcp 10.0.10.0 0.0.0.255 host 10.0.50.20 eq www
+permit tcp 10.0.20.0 0.0.0.255 host 10.0.50.20 eq www
+permit tcp 10.0.30.0 0.0.0.255 host 10.0.50.20 eq www
+permit tcp 10.0.40.0 0.0.0.255 host 10.0.50.20 eq www
+permit tcp 10.0.10.0 0.0.0.255 host 10.0.50.20 eq 443
+permit tcp 10.0.20.0 0.0.0.255 host 10.0.50.20 eq 443
+permit tcp 10.0.30.0 0.0.0.255 host 10.0.50.20 eq 443
+permit tcp 10.0.40.0 0.0.0.255 host 10.0.50.20 eq 443
+remark Rule 5 - IT administration only
+permit tcp 10.0.40.0 0.0.0.255 10.0.50.0 0.0.0.255 eq 22
+remark Syslog from infrastructure devices
+permit udp 10.0.99.0 0.0.0.255 host 10.0.50.30 eq 514
+permit udp host 10.0.254.1 host 10.0.50.30 eq 514
+permit udp host 203.0.113.6 host 10.0.50.30 eq 514
+remark ICMP for availability checks from IT
+permit icmp 10.0.40.0 0.0.0.255 10.0.50.0 0.0.0.255
+remark VPN users to permitted servers
+permit ip 10.0.201.0 0.0.0.255 host 10.0.50.10
+permit ip 10.0.201.0 0.0.0.255 host 10.0.50.20
+permit ip 10.0.202.0 0.0.0.255 10.0.50.0 0.0.0.255
+remark Deny everything else
+deny ip any 10.0.50.0 0.0.0.255
+ip access-list extended SERVERS-IN
+remark Allow established TCP return traffic
+permit tcp 10.0.50.0 0.0.0.255 any established
+remark Allow DNS replies
+permit udp 10.0.50.0 0.0.0.255 eq domain any
+remark Allow replies to IT management
+permit ip 10.0.50.0 0.0.0.255 10.0.40.0 0.0.0.255
+remark Allow servers to reach infrastructure and internet
+permit ip 10.0.50.0 0.0.0.255 10.0.99.0 0.0.0.255
+remark Rule 9 - deny server-initiated to user VLANs
+deny ip 10.0.50.0 0.0.0.255 10.0.10.0 0.0.0.255
+deny ip 10.0.50.0 0.0.0.255 10.0.20.0 0.0.0.255
+deny ip 10.0.50.0 0.0.0.255 10.0.30.0 0.0.0.255
+remark Everything else permitted
+permit ip 10.0.50.0 0.0.0.255 any
+!
+! ---------------------------------------------------------------- Management
+! SSH only — Telnet is refused on every vty line (2.10.3).
+! The `log` keyword is not supported on access list entries by this platform,
+! so rule matches are not recorded (3.6 — D16). Device events are.
+!
+logging 10.0.50.30
+!
+line con 0
+ exec-timeout 5 0
+ login local
+!
+line aux 0
+!
+line vty 0 4
+ exec-timeout 5 0
+ login local
+ transport input ssh
+line vty 5 15
+ exec-timeout 5 0
+ login local
+ transport input ssh
+!
+ntp server 203.0.113.6
+!
+end
